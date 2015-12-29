@@ -103,3 +103,90 @@ class Test(TestCase):
             max_timeout=15)
 
         proc.kill_and_wait()
+
+    def test_exclude_files(self):
+
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            exclude_files=[".gz$"]
+        )
+        os.mkdir(self.working_dir + "/log/")
+
+        testfile = self.working_dir + "/log/test.gz"
+        file = open(testfile, 'w')
+        file.write("line in gz file\n")
+        file.close()
+
+        testfile = self.working_dir + "/log/test.log"
+        file = open(testfile, 'w')
+        file.write("line in log file\n")
+        file.close()
+
+        filebeat = self.start_filebeat()
+
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=15)
+
+        # TODO: Find better solution when filebeat did crawl the file
+        # Idea: Special flag to filebeat so that filebeat is only doing and
+        # crawl and then finishes
+        filebeat.kill_and_wait()
+
+        output = self.read_output()
+
+        # Check that output file has the same number of lines as the log file
+        assert 1 == len(output)
+        assert output[0]["message"] == "line in log file"
+
+    def test_rotating_ignore_older_low_write_rate(self):
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            ignoreOlder="1s",
+            scan_frequency="0.1s",
+        )
+
+        os.mkdir(self.working_dir + "/log/")
+        testfile = self.working_dir + "/log/test.log"
+
+        proc = self.start_filebeat(debug_selectors=['*'])
+
+        # wait for first  "Start next scan" log message
+        self.wait_until(
+            lambda: self.log_contains(
+                "Start next scan"),
+            max_timeout=10)
+
+        lines = 0
+
+        # write first line
+        lines += 1
+        with open(testfile, 'a') as file:
+            file.write("Line {}\n".format(lines))
+
+        # wait for log to be read
+        self.wait_until(
+            lambda: self.output_has(lines=lines),
+            max_timeout=15)
+
+        # log rotate
+        os.rename(testfile, testfile + ".1")
+        open(testfile, 'w').close()
+
+        # wait for file to be closed due to ignore_older
+        self.wait_until(
+            lambda: self.log_contains(
+                "Closing file: {}\n".format(os.path.abspath(testfile))),
+            max_timeout=10)
+
+        # write second line
+        lines += 1
+        with open(testfile, 'a') as file:
+            file.write("Line {}\n".format(lines))
+
+        self.wait_until(
+            # allow for events to be send multiple times due to log rotation
+            lambda: self.output_count(lambda x: x >= lines),
+            max_timeout=5)
+
+        proc.kill_and_wait()
