@@ -104,41 +104,6 @@ class Test(TestCase):
 
         proc.kill_and_wait()
 
-    def test_exclude_files(self):
-
-        self.render_config_template(
-            path=os.path.abspath(self.working_dir) + "/log/*",
-            exclude_files=[".gz$"]
-        )
-        os.mkdir(self.working_dir + "/log/")
-
-        testfile = self.working_dir + "/log/test.gz"
-        file = open(testfile, 'w')
-        file.write("line in gz file\n")
-        file.close()
-
-        testfile = self.working_dir + "/log/test.log"
-        file = open(testfile, 'w')
-        file.write("line in log file\n")
-        file.close()
-
-        filebeat = self.start_filebeat()
-
-        self.wait_until(
-            lambda: self.output_has(lines=1),
-            max_timeout=15)
-
-        # TODO: Find better solution when filebeat did crawl the file
-        # Idea: Special flag to filebeat so that filebeat is only doing and
-        # crawl and then finishes
-        filebeat.kill_and_wait()
-
-        output = self.read_output()
-
-        # Check that output file has the same number of lines as the log file
-        assert 1 == len(output)
-        assert output[0]["message"] == "line in log file"
-
     def test_rotating_ignore_older_low_write_rate(self):
         self.render_config_template(
             path=os.path.abspath(self.working_dir) + "/log/*",
@@ -176,8 +141,9 @@ class Test(TestCase):
         # wait for file to be closed due to ignore_older
         self.wait_until(
             lambda: self.log_contains(
-                "Closing file: {}\n".format(os.path.abspath(testfile))),
+              "Error: Stop harvesting as file is older then ignore_older: {};".format(os.path.abspath(testfile))),
             max_timeout=10)
+        time.sleep(2)
 
         # write second line
         lines += 1
